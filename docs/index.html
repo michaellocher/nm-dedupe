@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nm-dedupe</title>
+<meta name="description" content="Reclaim the disk space duplicate node_modules files take on macOS, with APFS clones. Works with npm, yarn or any package manager.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3.6' fill='%23007aff'/%3E%3Crect x='3.5' y='3.5' width='4' height='4' rx='1' fill='%23fff'/%3E%3Crect x='8.5' y='3.5' width='4' height='4' rx='1' fill='%23fff'/%3E%3Crect x='3.5' y='8.5' width='4' height='4' rx='1' fill='%23fff'/%3E%3Crect x='8.5' y='8.5' width='4' height='4' rx='1' fill='%23ff9500'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: a macOS app window on a WebGL wallpaper. Every element is a native macOS pattern: App Store header, Settings groups, Storage bar with Recommendations, Terminal. */
+@layer tokens, base, window, controls, panes;
+
+@layer tokens {
+  :root {
+    color-scheme: light dark;
+    --window: light-dark(#ffffff, #1e1e1e);
+    --chrome: light-dark(rgb(240 240 243 / .8), rgb(42 42 46 / .74));
+    --group: light-dark(#f2f2f4, #2b2b2d);
+    --label: light-dark(#1d1d1f, #f5f5f7);
+    --label-2: light-dark(#6e6e73, #98989d);
+    --label-3: light-dark(#a1a1a6, #636366);
+    --sep: light-dark(rgb(0 0 0 / .1), rgb(255 255 255 / .1));
+    --fill: light-dark(rgb(0 0 0 / .05), rgb(255 255 255 / .08));
+    --blue: light-dark(#007aff, #0a84ff);
+    --orange: light-dark(#ff9500, #ff9f0a);
+    --green: light-dark(#34c759, #30d158);
+    --yellow: light-dark(#ffcc00, #ffd60a);
+    --gray: light-dark(#8e8e93, #8e8e93);
+    --purple: light-dark(#af52de, #bf5af2);
+    --track: light-dark(#e5e5ea, #3a3a3c);
+    --term-bg: light-dark(#ffffff, #1e1e1e);
+    --term-fg: light-dark(#1d1d1f, #e5e5e7);
+    --term-bar: light-dark(#ececee, #323234);
+    --shadow: light-dark(0 0 0 .5px rgb(0 0 0 / .16), 0 0 0 .5px rgb(255 255 255 / .16)), 0 22px 70px -16px rgb(0 0 0 / .5);
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+    &[data-theme="light"] { color-scheme: light; }
+    &[data-theme="dark"] { color-scheme: dark; }
+  }
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; color: var(--label); font: 400 13.5px/1.45 var(--sans); -webkit-font-smoothing: antialiased; letter-spacing: -.003em;
+    background: light-dark(#9aa7da, #1c1838) fixed;
+    background-image: light-dark(linear-gradient(135deg, #6f8fd6, #b58fd8 55%, #f0a6b8), linear-gradient(135deg, #10204a, #3b1f5c 55%, #5a2140));
+  }
+  #wallpaper { position: fixed; inset: 0; inline-size: 100%; block-size: 100%; display: block; }
+  a { color: var(--blue); text-decoration: none; &:hover { text-decoration: underline; } }
+  :is(a, button):focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 50%, transparent); outline-offset: 1px; border-radius: 6px; }
+  code { font: 400 .93em var(--mono); }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+  svg { display: block; }
+}
+
+@layer window {
+  .desk {
+    position: relative;
+    padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 44px 64px;
+    @media (width < 700px) { padding-block: 10px 24px; }
+  }
+  .window {
+    container: window / inline-size;
+    max-inline-size: 1040px; margin-inline: auto; border-radius: 12px; overflow: clip; box-shadow: var(--shadow); background: var(--window);
+  }
+  .vibrant { background: var(--chrome); backdrop-filter: saturate(180%) blur(28px); -webkit-backdrop-filter: saturate(180%) blur(28px); }
+  .lights {
+    display: flex; gap: 8px;
+    & i { inline-size: 12px; block-size: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgb(0 0 0 / .18); }
+    & i:nth-child(1) { background: #ff5f57; } & i:nth-child(2) { background: #febc2e; } & i:nth-child(3) { background: #28c840; }
+  }
+  .toolbar {
+    position: sticky; inset-block-start: env(safe-area-inset-top, 0px); z-index: 5;
+    display: flex; align-items: center; gap: 16px; block-size: 52px; padding-inline: 18px 12px;
+    border-block-end: 1px solid var(--sep);
+    & .title { font-weight: 600; font-size: 14px; flex: 1; min-inline-size: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    & .actions { display: flex; gap: 8px; }
+  }
+  .split {
+    display: grid; grid-template-columns: 220px minmax(0, 1fr);
+    & > * { min-inline-size: 0; }
+  }
+  .sidebar {
+    border-inline-end: 1px solid var(--sep);
+    & nav { position: sticky; inset-block-start: 52px; padding: 12px 10px 24px; display: grid; gap: 2px; }
+    & .heading { font-size: 11px; font-weight: 600; color: var(--label-3); padding: 12px 8px 4px; &:first-child { padding-block-start: 2px; } }
+    & a {
+      display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; color: var(--label); font-size: 13px; min-block-size: 28px;
+      &:hover { text-decoration: none; }
+      &.on { background: color-mix(in srgb, var(--label) 10%, transparent); }
+    }
+  }
+  .statusbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 8px 18px; border-block-start: 1px solid var(--sep); font-size: 11.5px; color: var(--label-2); }
+
+  @container window (width < 820px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .sidebar { display: none; }
+  }
+}
+
+@layer controls {
+  .sq {
+    flex: none; inline-size: 20px; block-size: 20px; border-radius: 5px; display: grid; place-items: center; color: #fff;
+    background: var(--c, var(--gray));
+    & svg { inline-size: 13px; block-size: 13px; }
+    &.lg { inline-size: 28px; block-size: 28px; border-radius: 7px; & svg { inline-size: 17px; block-size: 17px; } }
+  }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; block-size: 24px; padding-inline: 11px; border-radius: 6px;
+    font: 500 13px var(--sans); color: var(--label); background: light-dark(#ffffff, #5a5a5e); border: 0; cursor: pointer; white-space: nowrap;
+    box-shadow: 0 0 0 .5px light-dark(rgb(0 0 0 / .18), rgb(0 0 0 / .4)), 0 1px 1.5px light-dark(rgb(0 0 0 / .12), rgb(0 0 0 / .3));
+    &:hover { text-decoration: none; filter: brightness(.97); }
+    &:active { filter: brightness(.92); }
+    &.default { color: #fff; background: linear-gradient(var(--blue), color-mix(in srgb, var(--blue) 88%, #000)); }
+    &:disabled { opacity: .55; cursor: default; }
+  }
+  .capsule {
+    display: inline-flex; align-items: center; block-size: 28px; padding-inline: 18px; border-radius: 99px; border: 0;
+    font: 700 13px var(--sans); letter-spacing: .02em; color: #fff; background: var(--blue); cursor: pointer;
+    &:hover { text-decoration: none; filter: brightness(1.06); }
+  }
+  .group {
+    background: var(--group); border-radius: 10px; overflow: hidden;
+    & + .group { margin-block-start: 12px; }
+  }
+  .row {
+    display: flex; align-items: center; gap: 10px; min-block-size: 40px; padding: 8px 12px; position: relative;
+    & + .row::before { content: ""; position: absolute; inset: 0 0 auto var(--inset, 12px); border-block-start: 1px solid var(--sep); }
+    &:has(> .sq) { --inset: 42px; }
+    & .text { flex: 1; min-inline-size: 0; }
+    & .text small { display: block; color: var(--label-2); font-size: 12px; line-height: 1.4; margin-block-start: 1px; }
+    & .value { color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    &.top { align-items: flex-start; & > .sq { margin-block-start: 1px; } }
+  }
+  .section-title { margin: 0 0 7px; padding-inline-start: 12px; font: 600 13px var(--sans); }
+  .footnote { margin: 7px 12px 0; font-size: 11.5px; color: var(--label-2); }
+  .spinner {
+    inline-size: 14px; block-size: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--label) 18%, transparent); border-block-start-color: var(--label-2);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { rotate: 1turn; } }
+}
+
+@layer panes {
+  .content {
+    padding: 28px clamp(16px, 4.5cqi, 44px) 44px; display: grid; gap: 30px;
+    & > * { min-inline-size: 0; }
+  }
+  .product {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 20px; align-items: center;
+    & .icon { grid-row: span 2; }
+    & h1 { margin: 0; font: 700 26px/1.15 var(--sans); letter-spacing: -.022em; }
+    & .subtitle { margin: 2px 0 0; color: var(--label-2); font-size: 14px; }
+    & .get { display: flex; align-items: center; gap: 14px; margin-block-start: 10px; flex-wrap: wrap; }
+    & .get small { color: var(--label-2); font-size: 11.5px; }
+  }
+  .icon {
+    inline-size: 96px; block-size: 96px; border-radius: 22px; padding: 21px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    background: linear-gradient(165deg, #4aa3ff, #0060df);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), inset 0 -1px 0 rgb(0 0 0 / .12), 0 8px 22px -8px rgb(0 70 180 / .55);
+    & i { border-radius: 5px; background: #fff; box-shadow: 0 1px 1px rgb(0 0 0 / .12); }
+    & i:last-child { background: #ff9500; }
+    @container window (width < 520px) { inline-size: 72px; block-size: 72px; border-radius: 17px; padding: 16px; gap: 6px; }
+  }
+  .about { margin: 0; font-size: 14px; line-height: 1.55; max-inline-size: 46em; }
+
+  .storage {
+    padding: 14px 14px 12px;
+    & .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; margin-block-end: 9px; }
+    & .head b { font-weight: 600; }
+    & .head span { color: var(--label-2); font-variant-numeric: tabular-nums; }
+  }
+  .bar {
+    display: flex; block-size: 20px; border-radius: 5px; overflow: hidden; background: var(--track);
+    & i { display: block; block-size: 100%; transition: inline-size 1.6s cubic-bezier(.4, 0, .2, 1); }
+    & i + i { box-shadow: inset 1px 0 0 var(--group); }
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 4px 16px; margin-block-start: 8px; font-size: 11.5px; color: var(--label-2);
+    & span { display: inline-flex; align-items: center; gap: 5px; }
+    & i { inline-size: 8px; block-size: 8px; border-radius: 50%; }
+  }
+  @container window (width < 520px) {
+    .toolbar .actions .btn:not(.default) { display: none; }
+  }
+  .recommend {
+    & #rec-action { display: flex; align-items: center; gap: 10px; }
+    & .state { display: inline-flex; align-items: center; gap: 6px; color: var(--label-2); }
+    & .done { color: var(--green); }
+    & .done svg { inline-size: 16px; block-size: 16px; }
+  }
+
+  .steps .num { flex: none; inline-size: 20px; block-size: 20px; border-radius: 50%; background: var(--blue); color: #fff; font-size: 11.5px; font-weight: 600; display: grid; place-items: center; }
+  .steps .row { --inset: 42px; }
+  .check { flex: none; inline-size: 18px; block-size: 18px; color: var(--green); }
+
+  .table { overflow-x: auto; }
+  table {
+    inline-size: 100%; border-collapse: collapse;
+    & th { text-align: start; font-weight: 500; font-size: 11.5px; color: var(--label-2); padding: 9px 12px 7px; border-block-end: 1px solid var(--sep); }
+    & td { padding: 9px 12px; border-block-end: 1px solid var(--sep); }
+    & tr:last-child td { border-block-end: 0; }
+    & .ours { font-weight: 600; }
+  }
+
+  .terminal {
+    border-radius: 10px; overflow: hidden; background: var(--term-bg); color: var(--term-fg);
+    box-shadow: 0 0 0 .5px light-dark(rgb(0 0 0 / .2), rgb(255 255 255 / .14)), 0 10px 30px -14px rgb(0 0 0 / .35);
+    & .bar-t { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; block-size: 28px; padding-inline: 10px; background: var(--term-bar); font-size: 12px; font-weight: 600; color: var(--label-2); border-block-end: 1px solid var(--sep); }
+    & .bar-t .lights i { inline-size: 11px; block-size: 11px; }
+    & .bar-t .btn { justify-self: end; block-size: 20px; font-size: 11.5px; padding-inline: 8px; }
+    & pre { margin: 0; padding: 12px 14px 14px; font: 400 12px/1.75 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+    & .c { color: var(--label-3); }
+  }
+
+  .toast {
+    position: fixed; inset: auto 0 max(24px, env(safe-area-inset-bottom, 0px)); margin-inline: auto; inline-size: max-content;
+    border: 0; border-radius: 10px; padding: 10px 14px; font: 500 13px var(--sans); color: var(--label);
+    display: flex; align-items: center; gap: 8px;
+    background: var(--chrome); backdrop-filter: saturate(180%) blur(28px); -webkit-backdrop-filter: saturate(180%) blur(28px);
+    box-shadow: 0 0 0 .5px var(--sep), 0 10px 30px -10px rgb(0 0 0 / .4);
+    transition: opacity .2s, translate .2s, display .2s allow-discrete, overlay .2s allow-discrete;
+    & svg { inline-size: 16px; block-size: 16px; color: var(--green); }
+    &:not(:popover-open) { opacity: 0; translate: 0 8px; }
+    @starting-style { &:popover-open { opacity: 0; translate: 0 8px; } }
+  }
+  @media (prefers-reduced-motion: reduce) { .bar i, .toast { transition: none; } .spinner { animation-duration: 2.4s; } }
+}
+</style>
+</head>
+<body>
+<canvas id="wallpaper" aria-hidden="true"></canvas>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="currentColor"/><path d="m6 10.2 2.6 2.6L14.2 7" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="4" width="12" height="8" rx="2"/><circle cx="11" cy="8" r=".6" fill="currentColor"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 16 16" fill="currentColor"><path d="M9.2 1.5 3 9h4.3l-.6 5.5L13 7H8.7z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 13.5 3.6v4.1c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.6z"/></symbol>
+  <symbol id="i-columns" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M8 3v10"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.2 14.3 13.5H1.7z"/></symbol>
+  <symbol id="i-docs" viewBox="0 0 16 16" fill="currentColor"><rect x="4.5" y="1.5" width="8.5" height="10.5" rx="1.5" opacity=".55"/><rect x="2.5" y="4" width="8.5" height="10.5" rx="1.5"/></symbol>
+  <symbol id="i-code" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5h5.5l6.5 6.5-5 5L2.5 7.5z"/><circle cx="5" cy="5" r="1.1" fill="#fff"/></symbol>
+</svg>
+
+<div class="desk">
+  <div class="window">
+    <header class="toolbar vibrant">
+      <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="title">nm-dedupe</div>
+      <div class="actions">
+        <a class="btn" href="https://github.com/michaellocher/nm-dedupe">GitHub</a>
+        <a class="btn default" href="#install">Install</a>
+      </div>
+    </header>
+
+    <div class="split">
+      <aside class="sidebar vibrant">
+        <nav aria-label="Sections">
+          <div class="heading">nm-dedupe</div>
+          <a href="#overview" class="on"><span class="sq" style="--c:var(--blue)"><svg><use href="#i-grid"/></svg></span>Overview</a>
+          <a href="#storage"><span class="sq" style="--c:var(--gray)"><svg><use href="#i-disk"/></svg></span>Storage</a>
+          <a href="#how"><span class="sq" style="--c:var(--purple)"><svg><use href="#i-bolt"/></svg></span>How it works</a>
+          <a href="#tested"><span class="sq" style="--c:var(--green)"><svg><use href="#i-shield"/></svg></span>Safety</a>
+          <a href="#compare"><span class="sq" style="--c:var(--orange)"><svg><use href="#i-columns"/></svg></span>Compared to pnpm</a>
+          <a href="#install"><span class="sq" style="--c:var(--blue)"><svg><use href="#i-down"/></svg></span>Install</a>
+          <a href="#limits"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span>Limits</a>
+          <div class="heading">Links</div>
+          <a href="https://github.com/michaellocher/nm-dedupe"><span class="sq" style="--c:var(--gray)"><svg><use href="#i-code"/></svg></span>Source</a>
+          <a href="https://github.com/michaellocher/nm-dedupe/releases"><span class="sq" style="--c:var(--gray)"><svg><use href="#i-tag"/></svg></span>Releases</a>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <section id="overview" class="product">
+          <div class="icon" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div>
+            <h1>nm-dedupe</h1>
+            <p class="subtitle">Store node_modules once</p>
+          </div>
+          <div class="get">
+            <a class="capsule" href="#install">GET</a>
+            <small>Free · macOS · Apple Silicon and Intel · 2.5 MB</small>
+          </div>
+        </section>
+
+        <p class="about">Every project keeps its own copy of the same packages. nm-dedupe turns identical files across your node_modules folders into APFS clones that share their disk blocks. npm, yarn and your bundler see ordinary files, and editing a dependency in one project never touches another.</p>
+
+        <section id="storage">
+          <h2 class="section-title">Storage</h2>
+          <div class="group">
+            <div class="storage">
+              <div class="head"><b>12 projects</b><span id="used">1.66 GB used</span></div>
+              <div class="bar" role="img" aria-label="Unique files 0.55 GB, duplicates 1.11 GB"><i id="seg-u" style="inline-size:33.1%;background:var(--blue)"></i><i id="seg-d" style="inline-size:66.9%;background:var(--orange)"></i></div>
+              <div class="legend"><span><i style="background:var(--blue)"></i>Unique files</span><span><i style="background:var(--orange)"></i>Duplicates</span><span><i style="background:var(--track)"></i>Available</span></div>
+            </div>
+          </div>
+          <h2 class="section-title" style="margin-block-start:18px">Recommendations</h2>
+          <div class="group recommend">
+            <div class="row">
+              <span class="sq lg" style="--c:var(--orange)"><svg><use href="#i-docs"/></svg></span>
+              <div class="text">Clone duplicate files<small id="rec-text">Save 1.11 GB by turning 53,436 duplicate files into APFS clones that share their blocks.</small></div>
+              <span id="rec-action"><button type="button" class="btn" id="clone">Clone…</button></span>
+            </div>
+          </div>
+          <div class="group">
+            <div class="row"><div class="text">Files scanned</div><span class="value">73,070</span></div>
+            <div class="row"><div class="text">Duplicate files</div><span class="value">53,436 (73 %)</span></div>
+            <div class="row"><div class="text">Freed, measured</div><span class="value">1.11 GB</span></div>
+            <div class="row"><div class="text">Dry run · real run</div><span class="value">2 s · 22 s</span></div>
+            <div class="row"><div class="text">Peak memory</div><span class="value">under 45 MB</span></div>
+          </div>
+          <p class="footnote">Benchmark of 12 typical projects (React, Next, Vite, TypeScript, ESLint, Jest, Express, Webpack) on an isolated APFS volume, reproducible with <code>bench/sample-projects.sh</code>.</p>
+        </section>
+
+        <section id="how">
+          <h2 class="section-title">How a file gets replaced</h2>
+          <div class="group steps">
+            <div class="row top"><span class="num">1</span><div class="text">Clone beside the file<small>With <code>clonefile()</code>. Permissions, group, timestamps and extended attributes are copied onto the clone.</small></div></div>
+            <div class="row top"><span class="num">2</span><div class="text">Compare every byte<small>Timestamps are never trusted on their own, because npm, tar and rsync reset them.</small></div></div>
+            <div class="row top"><span class="num">3</span><div class="text">Swap atomically<small>With <code>renamex_np()</code>. The original stays under a temporary name until the run ends.</small></div></div>
+            <div class="row top"><span class="num">4</span><div class="text">Verify, then delete<small>The original is deleted only if it still holds the same bytes. If anything wrote to it, it goes back in place.</small></div></div>
+          </div>
+        </section>
+
+        <section id="tested">
+          <h2 class="section-title">Safety tests on real APFS</h2>
+          <div class="group">
+            <div class="row top" style="--inset:40px"><svg class="check"><use href="#i-check"/></svg><div class="text">Crashes before and after every swap, <code>kill -9</code> at random moments<small>Every file keeps its content and metadata.</small></div></div>
+            <div class="row top" style="--inset:40px"><svg class="check"><use href="#i-check"/></svg><div class="text">Other processes writing during a run<small>In place, through already open files, with restored timestamps. No write is lost.</small></div></div>
+            <div class="row top" style="--inset:40px"><svg class="check"><use href="#i-check"/></svg><div class="text">Read-only folders, immutable files, ACLs, hard links, symlinks<small>Left alone.</small></div></div>
+            <div class="row top" style="--inset:40px"><svg class="check"><use href="#i-check"/></svg><div class="text">Tabs, newlines, Unicode and 255-byte file names<small>Handled like any other file.</small></div></div>
+          </div>
+        </section>
+
+        <section id="compare">
+          <h2 class="section-title">Compared to pnpm</h2>
+          <div class="group table">
+            <table>
+              <thead><tr><th></th><th>npm</th><th>pnpm</th><th>npm + nm-dedupe</th></tr></thead>
+              <tbody>
+                <tr><td>Disk usage</td><td>a copy per project</td><td>one copy</td><td class="ours">one copy</td></tr>
+                <tr><td>Package manager</td><td>npm</td><td>pnpm only</td><td class="ours">any</td></tr>
+                <tr><td>Editing a dependency</td><td>changes one project</td><td>changes all projects</td><td class="ours">changes one project</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="install">
+          <h2 class="section-title">Install</h2>
+          <div class="terminal">
+            <div class="bar-t"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div><span>Terminal</span><button type="button" class="btn" id="copy">Copy</button></div>
+<pre><span class="c"># install the universal binary</span>
+$ <span id="cmd">curl -fsSL https://github.com/michaellocher/nm-dedupe/releases/latest/download/nm-dedupe-macos-universal.tar.gz | sudo tar -xz -C /usr/local/bin</span>
+
+<span class="c"># see what would be freed, change nothing</span>
+$ nm-dedupe -n ~/Developer
+
+<span class="c"># clone duplicates and report the freed space</span>
+$ nm-dedupe ~/Developer
+
+<span class="c"># run after every npm install and npm ci</span>
+$ nm-dedupe hook >> ~/.zshrc</pre>
+          </div>
+          <p class="footnote">Or build from source with <code>cargo install --git https://github.com/michaellocher/nm-dedupe</code></p>
+        </section>
+
+        <section id="limits">
+          <h2 class="section-title">Limits</h2>
+          <div class="group">
+            <div class="row top"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span><div class="text">APFS only<small>Clones work within one volume on macOS.</small></div></div>
+            <div class="row top"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span><div class="text">Provenance<small>macOS sets <code>com.apple.provenance</code> per app, so a clone keeps the source's value. Every other attribute is kept exactly.</small></div></div>
+            <div class="row top"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span><div class="text">Files held open<small>A program that writes to a file after the run has ended writes to the replaced original, as after <code>npm install</code>.</small></div></div>
+            <div class="row top"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span><div class="text">Time Machine snapshots<small>Local snapshots keep the old blocks until they expire.</small></div></div>
+            <div class="row top"><span class="sq" style="--c:var(--yellow)"><svg><use href="#i-warn"/></svg></span><div class="text">Not notarized<small>After a browser download, run <code>xattr -d com.apple.quarantine nm-dedupe</code>.</small></div></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="statusbar vibrant"><span>MIT license</span><a href="https://github.com/michaellocher/nm-dedupe">github.com/michaellocher/nm-dedupe</a></footer>
+  </div>
+</div>
+
+<div class="toast" id="toast" popover="manual"><svg><use href="#i-check"/></svg>Install command copied</div>
+
+<script>
+(function () {
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var dark = matchMedia("(prefers-color-scheme: dark)");
+  function isDark() { var t = document.documentElement.getAttribute("data-theme"); return t ? t === "dark" : dark.matches; }
+
+  // WebGL wallpaper: slow flowing color fields like a macOS dynamic wallpaper, at half resolution.
+  (function () {
+    var cv = document.getElementById("wallpaper");
+    var gl = cv.getContext("webgl", { antialias: false });
+    if (!gl) { cv.remove(); return; }
+    var vs = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
+    var fs = [
+      "precision mediump float;uniform vec2 r;uniform float t;uniform vec3 a,b,c,d;",
+      "vec2 h(vec2 p){p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3)));return fract(sin(p)*43758.5453)*2.-1.;}",
+      "float n(vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f);",
+      "return mix(mix(dot(h(i),f),dot(h(i+vec2(1,0)),f-vec2(1,0)),u.x),mix(dot(h(i+vec2(0,1)),f-vec2(0,1)),dot(h(i+vec2(1,1)),f-vec2(1,1)),u.x),u.y);}",
+      "void main(){vec2 uv=gl_FragCoord.xy/r;vec2 q=uv*vec2(r.x/r.y,1.)*1.4;float s=t*.035;",
+      "vec2 w=vec2(n(q+s),n(q+vec2(4.2,1.3)-s));",
+      "float f1=smoothstep(-.6,.7,n(q+w*1.6+vec2(s,0.)));float f2=smoothstep(-.5,.8,n(q*1.3-w+vec2(0.,s*1.4)+7.));",
+      "vec3 col=mix(a,b,uv.x*.7+uv.y*.3);col=mix(col,c,f1*.75);col=mix(col,d,f2*.55);",
+      "col+=h(gl_FragCoord.xy).x*.012;gl_FragColor=vec4(col,1.);}"
+    ].join("");
+    function sh(type, src) { var o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); return o; }
+    var pr = gl.createProgram();
+    gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { cv.remove(); return; }
+    gl.useProgram(pr);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(pr, "p");
+    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    var U = {}; ["r", "t", "a", "b", "c", "d"].forEach(function (k) { U[k] = gl.getUniformLocation(pr, k); });
+    var light = [[.44, .56, .84], [.71, .56, .85], [.95, .65, .72], [.49, .79, .93]];
+    var night = [[.06, .12, .29], [.23, .12, .36], [.35, .13, .25], [.07, .27, .38]];
+    var t0 = performance.now(), last = 0;
+    function size() { cv.width = Math.max(1, Math.round(innerWidth / 2)); cv.height = Math.max(1, Math.round(innerHeight / 2)); gl.viewport(0, 0, cv.width, cv.height); }
+    function render(now) {
+      var pal = isDark() ? night : light;
+      gl.uniform2f(U.r, cv.width, cv.height);
+      gl.uniform1f(U.t, reduce ? 20 : (now - t0) / 1000 + 20);
+      ["a", "b", "c", "d"].forEach(function (k, i) { gl.uniform3fv(U[k], pal[i]); });
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    function loop(now) { if (!document.hidden && now - last > 33) { render(now); last = now; } requestAnimationFrame(loop); }
+    size(); render(performance.now());
+    addEventListener("resize", function () { size(); render(performance.now()); });
+    dark.addEventListener("change", function () { render(performance.now()); });
+    if (!reduce) requestAnimationFrame(loop);
+  })();
+
+  // Recommendation: "Clone…" plays the measured benchmark result on the storage bar.
+  var clone = document.getElementById("clone"), action = document.getElementById("rec-action");
+  var used = document.getElementById("used"), segD = document.getElementById("seg-d"), recText = document.getElementById("rec-text");
+  var CHECK = '<svg><use href="#i-check"/></svg>';
+  function count(from, to, ms, done) {
+    var start = performance.now();
+    (function step(now) {
+      var p = Math.min(1, (now - start) / ms), e = 1 - Math.pow(1 - p, 3);
+      used.textContent = (from + (to - from) * e).toFixed(2) + " GB used";
+      if (p < 1) requestAnimationFrame(step); else done();
+    })(start);
+  }
+  function reset() {
+    segD.style.inlineSize = "66.9%"; used.textContent = "1.66 GB used";
+    recText.textContent = "Save 1.11 GB by turning 53,436 duplicate files into APFS clones that share their blocks.";
+    action.replaceChildren(clone); clone.disabled = false;
+  }
+  clone.addEventListener("click", function () {
+    clone.disabled = true;
+    action.innerHTML = '<span class="state"><span class="spinner"></span>Cloning…</span>';
+    setTimeout(function () {
+      segD.style.inlineSize = "0%";
+      count(1.66, 0.55, reduce ? 1 : 1600, function () {
+        recText.textContent = "53,436 duplicate files are now APFS clones. 1.11 GB freed.";
+        action.innerHTML = '<span class="state done">' + CHECK + 'Done</span><button type="button" class="btn" id="again">Reset</button>';
+        document.getElementById("again").addEventListener("click", reset);
+      });
+    }, reduce ? 0 : 700);
+  });
+
+  // Copy the install command, confirm with a popover toast.
+  var copy = document.getElementById("copy"), toast = document.getElementById("toast");
+  copy.addEventListener("click", function () {
+    var el = document.getElementById("cmd");
+    navigator.clipboard.writeText(el.textContent).then(function () {
+      if (toast.showPopover) { toast.showPopover(); setTimeout(function () { toast.hidePopover(); }, 1600); }
+    }, function () {
+      var r = document.createRange(); r.selectNodeContents(el);
+      var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    });
+  });
+
+  // Sidebar follows the section in view.
+  var links = Array.prototype.slice.call(document.querySelectorAll(".sidebar a[href^='#']"));
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (e.isIntersecting) links.forEach(function (a) { a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id); });
+      });
+    }, { rootMargin: "-25% 0px -65% 0px" });
+    links.forEach(function (a) { var s = document.querySelector(a.getAttribute("href")); if (s) io.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
